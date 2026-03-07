@@ -64,7 +64,7 @@ def parse_args_and_config():
     parser.add_argument('--MT_1_l1_loss_w', type=int, default=3, help='Weights of L1 loss in MT stage 1')
     parser.add_argument('--MT_2_l1_loss_w', type=int, default=5, help='Weights of L1 loss in MT stage 2')
     parser.add_argument('--MT_lpips_loss_w', type=int, default=10, help='Weights of LPIPS loss in MT')
-    parser.add_argument('--MT_adv_loss_w', type=int, default=0.5, help='Weights of adv loss')
+    parser.add_argument('--MT_adv_loss_w', type=float, default=0.5, help='Weights of adv loss')
     
     parser.add_argument('--MR_clip_loss_w', type=int, default=5, help='Weights of CLIP loss in MR')
     parser.add_argument('--MR_l1_loss_w', type=float, default=2, help='Weights of L1 loss in MR')

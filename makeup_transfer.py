@@ -289,6 +289,7 @@ class DiffAM_MT(object):
                         loss_dis = g_A_eye_left_loss_his + g_A_eye_right_loss_his + \
                             0.15 * g_A_skin_loss_his + g_A_lip_loss_his
 
+                        torch.cuda.empty_cache()
                         loss_dir = (2 - clip_loss_func(x0, self.non_makeup_image.unsqueeze(
                             0), x, self.makeup_image.unsqueeze(0))) / 2
                         loss_dir = -torch.log(loss_dir)
