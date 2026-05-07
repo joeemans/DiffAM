@@ -10,6 +10,11 @@ import numpy as np
 from makeup_transfer import DiffAM_MT
 from makeup_removal import DiffAM_MR
 
+
+def _format_exp_float(value):
+    return f"{value:g}"
+
+
 def parse_args_and_config():
     parser = argparse.ArgumentParser(description=globals()['__doc__'])
 
@@ -65,6 +70,12 @@ def parse_args_and_config():
     parser.add_argument('--MT_2_l1_loss_w', type=int, default=5, help='Weights of L1 loss in MT stage 2')
     parser.add_argument('--MT_lpips_loss_w', type=int, default=10, help='Weights of LPIPS loss in MT')
     parser.add_argument('--MT_adv_loss_w', type=float, default=0.5, help='Weights of adv loss')
+    parser.add_argument('--MT_1_fft_loss_w', type=float, default=0.0, help='Weights of Fourier-Charbonnier loss in MT stage 1')
+    parser.add_argument('--MT_2_fft_loss_w', type=float, default=0.0, help='Weights of Fourier-Charbonnier loss in MT stage 2')
+    parser.add_argument('--MT_fft_cutoff', type=float, default=0.15, help='High-frequency cutoff for Fourier-Charbonnier loss in MT')
+    parser.add_argument('--MT_fft_eps', type=float, default=1e-3, help='Charbonnier epsilon for Fourier-Charbonnier loss in MT')
+    parser.add_argument('--MT_fft_mask_mode', type=str, default='none', choices=['none', 'face_union'],
+                        help='Masking mode for Fourier-Charbonnier loss in MT')
     
     parser.add_argument('--MR_clip_loss_w', type=int, default=5, help='Weights of CLIP loss in MR')
     parser.add_argument('--MR_l1_loss_w', type=float, default=2, help='Weights of L1 loss in MR')
@@ -91,6 +102,13 @@ def parse_args_and_config():
 
     if args.makeup_transfer:
         args.exp = args.exp + f'_MT_{new_config.data.category}_{args.ref_img}_t{args.t_0}_ninv{args.n_inv_step}_ngen{args.n_train_step}_dis{args.MT_1_dis_loss_w}_dir{args.MT_1_dir_loss_w}_lr{args.lr_clip_finetune}'
+        if args.MT_1_fft_loss_w != 0.0 or args.MT_2_fft_loss_w != 0.0:
+            args.exp = args.exp + \
+                f'_fft1{_format_exp_float(args.MT_1_fft_loss_w)}' + \
+                f'_fft2{_format_exp_float(args.MT_2_fft_loss_w)}' + \
+                f'_cut{_format_exp_float(args.MT_fft_cutoff)}' + \
+                f'_eps{_format_exp_float(args.MT_fft_eps)}' + \
+                f'_mask{args.MT_fft_mask_mode}'
     elif args.makeup_removal:
         args.exp = args.exp + f'_MR_{new_config.data.category}_t{args.t_0}_ninv{args.n_inv_step}_ngen{args.n_train_step}_id{args.MR_id_loss_w}_l1{args.MR_l1_loss_w}_lr{args.lr_clip_finetune}'
     elif args.edit_one_image_MT:

@@ -14,6 +14,7 @@ from utils.image_processing import *
 from utils.model_utils import *
 from losses.id_loss import cal_adv_loss
 from losses.clip_loss import CLIPLoss
+from losses.frequency_loss import FourierCharbonnierLoss
 from datasets.data_utils import get_dataset, get_dataloader
 from configs.paths_config import DATASET_PATHS, MODEL_PATHS
 from utils.align_utils import run_alignment
@@ -99,6 +100,13 @@ class DiffAM_MT(object):
             lambda_makeup_direction=1,
             lambda_direction=0,
             clip_model=self.args.clip_model_name)
+        fft_loss_func = FourierCharbonnierLoss(
+            cutoff=self.args.MT_fft_cutoff,
+            eps=self.args.MT_fft_eps,
+            mask_mode=self.args.MT_fft_mask_mode,
+        ).to(self.device)
+        fft_loss_enabled = self.args.MT_1_fft_loss_w != 0.0 or self.args.MT_2_fft_loss_w != 0.0
+        l1_loss_func = nn.L1Loss()
         loss_fn_alex = lpips.LPIPS(net='alex').to(self.device)
         # ----------- Precompute Latents -----------#
         print("Prepare identity latent")
@@ -242,6 +250,9 @@ class DiffAM_MT(object):
                             mask_A_eye_left, mask_B_eye_left)
                         mask_A_eye_right, mask_B_eye_right, index_A_eye_right, index_B_eye_right = mask_preprocess(
                             mask_A_eye_right, mask_B_eye_right)
+                        face_union_mask = (
+                            mask_A_lip + mask_A_skin + mask_A_eye_left + mask_A_eye_right
+                        ).clamp(0.0, 1.0)
 
                         x0 = x0.to(self.device)
                         x_id = x_id.to(self.device)
@@ -293,20 +304,59 @@ class DiffAM_MT(object):
                         loss_dir = (2 - clip_loss_func(x0, self.non_makeup_image.unsqueeze(
                             0), x, self.makeup_image.unsqueeze(0))) / 2
                         loss_dir = -torch.log(loss_dir)
-                        loss_l1 = nn.L1Loss()(x0, x)
+                        if fft_loss_enabled:
+                            fft_mask = face_union_mask if self.args.MT_fft_mask_mode == 'face_union' else None
+                            loss_fft = fft_loss_func(x, x0, mask=fft_mask)
+                        else:
+                            loss_fft = x.new_zeros(())
+                        loss_l1 = l1_loss_func(x0, x)
                         loss_lpips = loss_fn_alex(x0, x)
                         if it_out < self.args.MT_iter_without_adv:
+                            weights = {
+                                'dis': float(self.args.MT_1_dis_loss_w),
+                                'dir': float(self.args.MT_1_dir_loss_w),
+                                'adv': 0.0,
+                                'lpips': float(self.args.MT_lpips_loss_w),
+                                'l1': float(self.args.MT_1_l1_loss_w),
+                                'fft': float(self.args.MT_1_fft_loss_w),
+                            }
+                        else:
+                            weights = {
+                                'dis': float(self.args.MT_2_dis_loss_w),
+                                'dir': float(self.args.MT_2_dir_loss_w),
+                                'adv': float(self.args.MT_adv_loss_w),
+                                'lpips': float(self.args.MT_lpips_loss_w),
+                                'l1': float(self.args.MT_2_l1_loss_w),
+                                'fft': float(self.args.MT_2_fft_loss_w),
+                            }
+                        if it_out < self.args.MT_iter_without_adv:
                             loss = self.args.MT_1_dis_loss_w * loss_dis + self.args.MT_1_dir_loss_w * loss_dir + \
-                                self.args.MT_lpips_loss_w * loss_lpips + self.args.MT_1_l1_loss_w * loss_l1
+                                self.args.MT_lpips_loss_w * loss_lpips + self.args.MT_1_l1_loss_w * loss_l1 + \
+                                self.args.MT_1_fft_loss_w * loss_fft
                         else:
                             loss = self.args.MT_2_dis_loss_w * loss_dis + self.args.MT_2_dir_loss_w * loss_dir + self.args.MT_adv_loss_w * \
                                 loss_adv + self.args.MT_lpips_loss_w * \
-                                loss_lpips + self.args.MT_1_l1_loss_w * loss_l1
+                                loss_lpips + self.args.MT_2_l1_loss_w * loss_l1 + self.args.MT_2_fft_loss_w * loss_fft
 
                         loss.backward()
                         optim_ft.step()
+                        weighted_terms = {
+                            'adv': weights['adv'] * float(loss_adv.detach()),
+                            'dir': weights['dir'] * float(loss_dir.detach()),
+                            'dis': weights['dis'] * float(loss_dis.detach()),
+                            'fft': weights['fft'] * float(loss_fft.detach()),
+                            'l1': weights['l1'] * float(loss_l1.detach()),
+                            'lpips': weights['lpips'] * float(loss_lpips.detach()),
+                        }
                         print(
-                            f"CLIP {step}-{it_out}: loss_adv: {loss_adv:.3f}, loss_dir: {loss_dir:.3f}, loss_dis: {loss_dis:.3f}")
+                            f"CLIP {step}-{it_out}: raw_adv: {float(loss_adv.detach()):.3f}, "
+                            f"raw_dir: {float(loss_dir.detach()):.3f}, raw_dis: {float(loss_dis.detach()):.3f}, "
+                            f"raw_fft: {float(loss_fft.detach()):.3f}, raw_l1: {float(loss_l1.detach()):.3f}, "
+                            f"raw_lpips: {float(loss_lpips.detach()):.3f} | "
+                            f"term_adv: {weighted_terms['adv']:.3f}, term_dir: {weighted_terms['dir']:.3f}, "
+                            f"term_dis: {weighted_terms['dis']:.3f}, term_fft: {weighted_terms['fft']:.3f}, "
+                            f"term_l1: {weighted_terms['l1']:.3f}, term_lpips: {weighted_terms['lpips']:.3f}, "
+                            f"total: {float(loss.detach()):.3f}")
 
                         if self.args.save_train_image:
                             tvu.save_image((x + 1) * 0.5, os.path.join(self.args.image_folder,
@@ -328,7 +378,8 @@ class DiffAM_MT(object):
                     model.module.load_state_dict(torch.load(save_name))
 
                 model.eval()
-                img_lat_pairs = img_lat_pairs_dic[mode]
+                eval_mode = 'test'
+                img_lat_pairs = img_lat_pairs_dic[eval_mode]
                 FAR01 = 0
                 FAR001 = 0
                 FAR0001 = 0
@@ -380,7 +431,7 @@ class DiffAM_MT(object):
                         total += 1
                     print(f"Eval {step}-{it_out}")
                     tvu.save_image((x + 1) * 0.5, os.path.join(self.args.image_folder,
-                                                               f'{mode}_{step}_2_clip_{self.ref_id.replace(" ", "_")}_{it_out}_ngen{self.args.n_test_step}.png'))
+                                                               f'{eval_mode}_{step}_2_clip_{self.ref_id.replace(" ", "_")}_{it_out}_ngen{self.args.n_test_step}.png'))
                     if step == self.args.n_test_img - 1:
                         break
                 print("ASR in FAR@0.1: {:.4f}, ASR in FAR@0.01: {:.4f}, ASR in FAR@0.001: {:.4f}".

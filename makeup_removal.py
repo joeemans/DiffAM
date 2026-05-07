@@ -273,7 +273,8 @@ class DiffAM_MR(object):
                     model.module.load_state_dict(torch.load(save_name))
 
                 model.eval()
-                img_lat_pairs = img_lat_pairs_dic[mode]
+                eval_mode = 'test'
+                img_lat_pairs = img_lat_pairs_dic[eval_mode]
                 for step, (x0, x_id, x_lat, _) in enumerate(img_lat_pairs):
                     with torch.no_grad():
                         x = x_lat
@@ -296,7 +297,7 @@ class DiffAM_MR(object):
                             (x+1)/2, './sample_fake_test/sample_{}.png'.format(step))
                         print(f"Eval {step}-{it_out}")
                         tvu.save_image((x + 1) * 0.5, os.path.join(self.args.image_folder,
-                                                                   f'{mode}_{step}_2_clip_{self.trg_txt.replace(" ", "_")}_{it_out}_ngen{self.args.n_test_step}.png'))
+                                                                   f'{eval_mode}_{step}_2_clip_{self.trg_txt.replace(" ", "_")}_{it_out}_ngen{self.args.n_test_step}.png'))
                         if step == self.args.n_test_img - 1:
                             break
 
